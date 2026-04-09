@@ -82,7 +82,7 @@ file_permission_users.css({
 // Make button to add a new user to the list:
 perm_add_user_select = define_new_user_select_field(
   "perm_add_user",
-  "Add...",
+  "Add User to Permissions",
   (on_user_change = function (selected_user) {
     // console.log("add...")
     let filepath = perm_dialog.attr("filepath");
@@ -104,6 +104,7 @@ perm_add_user_select = define_new_user_select_field(
   }),
 );
 perm_add_user_select.find("span").hide(); // Cheating a bit - just show the button from the user select; hide the part that displays the username.
+perm_add_user_select.css({ display: "flex", flexDirection: "column", gap: "4px" });
 
 // -- Make button to remove currently-selected user; also make some dialogs that may pop up when user clicks this. --
 
@@ -174,7 +175,7 @@ are_you_sure_dialog.text("Do you want to remove permissions for this user?");
 
 // Make actual "remove" button:
 perm_remove_user_button = $(
-  '<button id="perm_remove_user" class="ui-button ui-widget ui-corner-all">Remove</button>',
+  '<button id="perm_remove_user" class="ui-button ui-widget ui-corner-all" title="Removes this user from the permissions list. Only works if all permissions are set directly on this file (not inherited).">Remove User from Permissions</button>',
 );
 perm_remove_user_button.click(function () {
   // Get the current user and filename we are working with:
@@ -205,6 +206,98 @@ perm_dialog.append(
 perm_dialog.append(file_permission_users);
 perm_dialog.append(perm_add_user_select);
 perm_add_user_select.append(perm_remove_user_button); // Cheating a bit again - add the remove button the the 'add user select' div, just so it shows up on the same line.
+
+// Confirmation dialog shown after "Remove All Access" to make clear the user has no remaining permissions.
+remove_all_access_confirm_dialog = define_new_dialog(
+  "remove_all_access_confirm_dialog",
+  "Permissions Removed",
+  {
+    buttons: {
+      OK: {
+        text: "OK",
+        id: "remove-all-access-confirm-ok-button",
+        click: function () {
+          $(this).dialog("close");
+        },
+      },
+    },
+  },
+);
+remove_all_access_confirm_dialog.html(
+  '<div id="remove_all_access_confirm_text"></div>',
+);
+
+// Make button to remove all access for a user, including inherited permissions.
+// Unlike "Remove User from Permissions", this works even when permissions come from inheritance by adding explicit Deny ACEs.
+perm_remove_all_access_button = $(
+  '<button id="perm_remove_all_access" class="ui-button ui-widget ui-corner-all" title="Denies all permissions for this user, including any inherited from a parent folder. Use this when the user has inherited permissions.">Remove All Access (Including Inherited)</button>',
+);
+perm_remove_all_access_button.click(function () {
+  let selected_username = file_permission_users.attr("selected_item");
+  let filepath = perm_dialog.attr("filepath");
+
+  if (!selected_username || selected_username.length === 0) return;
+
+  let file_obj = path_to_file[filepath];
+  let user = all_users[selected_username];
+
+  // Capture effective permissions BEFORE making any changes
+  let effective_perms = Object.values(permissions).filter(function (p) {
+    return allow_user_action(file_obj, user, p);
+  });
+
+  // Remove all direct ACEs for this user
+  remove_all_perms_for_user(file_obj, user);
+
+  // Add explicit Deny ACEs for every permission the user had effective access to,
+  // so that inherited Allows are overridden
+  if (effective_perms.length > 0) {
+    add_permissons(file_obj, user, effective_perms, false);
+  }
+
+  // Refresh the checkbox UI
+  grouped_permissions.attr("username", "");
+  grouped_permissions.attr("username", selected_username);
+
+  $("#permdialog_last_action").text(
+    "Last action: Removed all access for " + selected_username,
+  );
+
+  // Show confirmation dialog explaining the outcome
+  $("#remove_all_access_confirm_text").html(
+    "<p><strong>" + selected_username + "</strong> now has no access rights to this file or folder.</p>" +
+    "<p>This user still appears in the permissions list, but all permissions have been denied. " +
+    "They will be unable to read, write, or perform any other action on this item.</p>"
+  );
+  remove_all_access_confirm_dialog.dialog("open");
+});
+perm_add_user_select.append(perm_remove_all_access_button);
+
+perm_full_control_button = $(
+  '<button id="perm_full_control" class="ui-button ui-widget ui-corner-all">Grant Full Control</button>',
+);
+perm_full_control_button.click(function() {
+  let selected_username = file_permission_users.attr("selected_item");
+  let filepath = perm_dialog.attr("filepath");
+
+  if(!selected_username || selected_username.length === 0) {
+    return;
+  }
+  
+  for (let g of perm_groupnames) {
+    if (!(g in permission_groups)) continue;
+    toggle_permission_group(filepath, selected_username, g, "deny", false);
+    toggle_permission_group(filepath, selected_username, g, "allow", true);
+  }
+
+  grouped_permissions.attr("username", "");
+  grouped_permissions.attr("username", selected_username);
+
+  $("#permdialog_last_action").text(
+    "Last action: Granted Full Control for " + selected_username,
+  );
+});
+perm_add_user_select.append(perm_full_control_button);
 perm_dialog.append(grouped_permissions);
 last_action_bar = $(
   '<div id="permdialog_last_action" style="margin-top:8px; padding:6px 8px; background:#f0f7ff; border:1px solid #b3d1f7; border-radius:4px; font-size:12px; color:#333; min-height:24px;">No changes made yet.</div>',
